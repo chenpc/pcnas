@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+import os
+import sys
+import importlib
+import argparse
+import uuid
+import random
+import subprocess
+import fcntl
+
+NEXUSDIR = os.environ['NEXUSDIR']
+uuid_file_path = os.path.join(NEXUSDIR, ".uuid")
+
+def exec_command(cmd, timeout=None):
+    res = subprocess.run(cmd, shell=True, timeout=timeout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    res.stdout = res.stdout.decode('utf-8')
+    return res
+
+
+def check_conf(platform):
+    check_file = NEXUSDIR + "/scripts/conf/" + platform + ".py"
+    if os.path.isfile(check_file):
+        return True
+    else:
+        return False
+
+
+def gen_mac():
+    mac = [0x52, 0x53, 0x00,
+           random.randint(0x00, 0xff),
+           random.randint(0x00, 0xff),
+           random.randint(0x00, 0xff)]
+    return ':'.join(map(lambda x: "%02x" % x, mac))
+
+
+def get_mac(vm_dir, if_file):
+    result = exec_command('find %s -name %s' % (vm_dir, if_file)).stdout
+    if len(result) == 0:
+        mac = gen_mac()
+        exec_command('echo %s > %s/%s' % (mac, vm_dir, if_file))
+    else:
+        mac = exec_command('cat %s/%s' % (vm_dir, if_file)).stdout.rstrip('\n')
+    return mac
+
+def clone_vm(domain, config, nat=False):
+    exec_command("virsh --connect qemu:///session suspend %s" % domain)
+    res = exec_command("virt-clone --connect qemu:///session -o %s --auto-clone | grep successfully" % domain).stdout
+    clone_domain = res.split('\'')[1]
+    exec_command("virsh --connect qemu:///session resume %s" % domain)
+
+    blk_list = exec_command("virsh --connect qemu:///session domblklist %s" % clone_domain).stdout.splitlines()[3:-1]
+    for blk in blk_list:
+        blk = blk.split()[1]
+        os.unlink(blk)
+        exec_command("qemu-img create -f qcow2 %s %s" % (blk, config.disk_capacity))
+    if nat:
+        exec_command('virsh --connect qemu:///session dumpxml %s| sed "s/\'br0\'/\'virbr0\'/g" | virsh define /dev/stdin' % (clone_domain))
+    exec_command("virsh --connect qemu:///session start %s" % clone_domain)
+    return clone_domain
+
+def start_vm(platform, config, guuid, nat=False, clone=True):
+    if hasattr(config, 'image_path') and config.image_path != "":
+        image_path = config.image_path
+    else:
+        image_path = NEXUSDIR + "/build/tmp/deploy/images/genericx86-64/core-image-{}-genericx86-64.hddimg".format(platform)
+
+    if not os.path.isfile(image_path):
+        sys.exit("'{}' not found".format(image_path))
+
+    home_dir = os.path.expanduser("~")
+    domain = "{}-{}".format(platform, guuid)
+    
+    res = exec_command("virsh --connect qemu:///session domid %s" % domain)
+    if res.returncode == 0 and clone is False:
+        guuid = uuid.uuid4().hex[:8]
+        domain = "{}-{}".format(platform, guuid)
+    elif res.returncode == 0 and clone is True:
+        return clone_vm(domain, config, nat)
+
+    vm_dir = NEXUSDIR + "/build/{}/{}".format(platform, domain)
+
+    if not os.path.exists(vm_dir):
+        os.makedirs(vm_dir)
+
+    # Disks
+    os.system("rm -rf {}/*.qcow2".format(vm_dir))
+    os.system("qemu-img create -f qcow2 -b {} {}/disk.qcow2 >/dev/null 2>&1".format(image_path, vm_dir))
+    disks = " --disk cache=writethrough,path={}/disk.qcow2,bus=virtio,serial=USB_DOM".format(vm_dir)
+
+    for disk in range(0, int(config.disk_count)):
+        os.system("qemu-img create -f qcow2 {}/disk{}.qcow2 {} >/dev/null".format(vm_dir, disk + 1, config.disk_capacity))
+        disks += " --disk cache=writeback,path={}/disk{}.qcow2,bus={},serial=DISK{}".format(vm_dir, disk + 1, config.disk_bus, disk)
+
+    # Networks
+    nets = ""
+    for net in range(0, int(config.net_count)):
+        macfile = ".macaddr{}".format(net)
+        if nat:
+            # Only use virbr0 for crosstest, avoid PTK DHCP IP not enough issue
+            nets += " --network bridge=virbr0,model={},mac={}".format(config.net_model, get_mac(vm_dir, macfile))
+        else:
+            nets += " --network bridge={},model={},mac={}".format(config.net_bridge, config.net_model, get_mac(vm_dir, macfile))
+
+    os.system("rm -rf {}/*.xml".format(vm_dir))
+    xml = "{}/{}.xml".format(vm_dir, domain)
+    exec_command("virt-install \
+          --name {} \
+          --connect qemu:///session \
+          --vcpus {} \
+          --memory {} \
+          --graphics none \
+          {} \
+          {} \
+          --boot hd \
+          --noautoconsole \
+          --filesystem {},home,accessmode=squash".format(domain, config.vcpus, config.memory, disks, nets, home_dir))
+
+    return domain
+
+
+def attach_vm(dom_name):
+    if os.system("virsh --connect qemu:///session console {}".format(dom_name)) == 0:
+        exec_command("virsh --connect qemu:///session destroy {}".format(dom_name))
+        exec_command("virsh --connect qemu:///session undefine --remove-all-storage {}".format(dom_name))
+
+
+def destroy_vm(dom_name):
+    os.system("virsh --connect qemu:///session destroy {}".format(dom_name))
+    os.system("virsh --connect qemu:///session undefine --remove-all-storage {}".format(dom_name))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-b", "--background", action="store_true", help="Start with cnosole detached")
+    parser.add_argument("-c", "--clone", action="store_true", help="Clone if VMs already exists")
+    parser.add_argument("-n", "--nat", action="store_true", help="NAT (use virbr0)")
+    parser.add_argument("-t", "--prefix", nargs="?", help="Domain Prefix")
+    parser.add_argument("-d", "--destroy", type=str, help="Destroy vm")
+    parser.add_argument('platform', nargs="?", help='Platform', type=str)
+
+    args = parser.parse_args()
+    if not os.path.exists(uuid_file_path):
+        guuid = uuid.uuid4().hex[:8]
+        with open(uuid_file_path, "w") as f:
+            f.write(guuid)
+    else:
+        with open(uuid_file_path, "r") as f:
+            guuid = f.read()
+
+    if args.prefix:
+        guuid += "-"+args.prefix
+
+    if args.destroy:
+        destroy_vm(args.destroy)
+        sys.exit()
+
+    if check_conf(args.platform):
+
+        # Lock .uuid
+        clone_lock = open(uuid_file_path, 'r')
+        fcntl.flock(clone_lock, fcntl.LOCK_EX)
+
+        # Start VM
+        qemu_conf = importlib.import_module("conf.{}".format(args.platform))
+        dom_name = start_vm(args.platform, qemu_conf, guuid, args.nat, args.clone)
+        # Unlock .uuid
+        fcntl.flock(clone_lock, fcntl.LOCK_UN)
+        clone_lock.close()
+        if args.background:
+            print(dom_name)
+        elif dom_name:
+            attach_vm(dom_name)
+    else:
+        sys.exit("Can not find 'conf/{}.py'".format(args.platform))

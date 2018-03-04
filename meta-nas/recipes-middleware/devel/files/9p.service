@@ -1,0 +1,8 @@
+[Unit]
+Description=9PFS for development
+After=promise.service
+
+[Service]
+ExecStart=/bin/mount -t 9p -o trans=virtio home /home/root -oversion=9p2000.L,cache=none
+[Install]
+WantedBy=multi-user.target

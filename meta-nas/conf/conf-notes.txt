@@ -1,0 +1,9 @@
+
+### Shell environment set up for builds. ###
+
+You can now run 'bitbake <target>'
+
+Common targets are:
+    core-image-nas
+
+You can also run generated qemu images with a command like 'runqemu nas'

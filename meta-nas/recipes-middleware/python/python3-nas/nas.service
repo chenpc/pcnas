@@ -1,0 +1,11 @@
+[Unit]
+Description=NAS Middleware Deamon
+After=NetworkManager.service
+
+[Service]
+PIDFile=/run/gunicorn.pid
+ExecStart=/usr/bin/gunicorn --pid /run/gunicorn.pid --preload -k sync -b 0.0.0.0:8080 --threads 32 nas:app
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+diff --git a/packaging/LSB/smb.conf b/packaging/LSB/smb.conf
+index 36c9839..23ca7c6 100644
+--- a/packaging/LSB/smb.conf
++++ b/packaging/LSB/smb.conf
+@@ -172,6 +172,17 @@
+ # Be very careful with case sensitivity - it can break things!
+ ;  case sensitive = no
+ 
++# Setup usershare options to enable non-root users to share folders
++# with the net usershare command.
++
++# Maximum number of usershare. 0 (default) means that usershare is disabled.
++   usershare max shares = 100
++
++# Allow users who've been granted usershare privileges to create
++# public shares, not just authenticated ones
++   usershare allow guests = yes
++
++
+ #============================ Share Definitions ==============================
+ [homes]
+    comment = Home Directories

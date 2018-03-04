@@ -1,0 +1,11 @@
+TEMPLATECONF=$(pwd)/meta-nas/conf
+NEXUSDIR=$(pwd)
+source poky/oe-init-build-env
+
+newpath=${NEXUSDIR}/scripts
+testpath=${NEXUSDIR}/crosstest
+PATH=$(echo $PATH | sed -re "s#(^|:)$newpath(:|$)#\2#g;s#^:##")
+PATH=$(echo $PATH | sed -re "s#(^|:)$testpath(:|$)#\2#g;s#^:##")
+# Add $newpath to $PATH
+export NEXUSDIR
+export PATH="$newpath:$testpath:$PATH"
