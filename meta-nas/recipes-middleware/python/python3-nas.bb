@@ -7,7 +7,7 @@ SRC_URI = "git://github.com/chenpc/python-nas;protocol=https \
 	file://nas.service"
 
 PV = "0.0.1+git${SRCPV}"
-SRCREV = "3d5d4d5c60ce9a8b44b5d2a0d7bb16af4621df74"
+SRCREV = "d407b1270b6b86b37370697a93b10d14e19a49bf"
 
 S = "${WORKDIR}/git"
 

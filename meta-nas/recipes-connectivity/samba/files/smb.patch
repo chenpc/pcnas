@@ -14,8 +14,8 @@ index 36c9839..23ca7c6 100644
 +
 +# Allow users who've been granted usershare privileges to create
 +# public shares, not just authenticated ones
-+   usershare allow guests = yes
-+
++   usershare allow guests = no
++   usershare owner only = yes
 +
  #============================ Share Definitions ==============================
  [homes]
